@@ -1,0 +1,87 @@
+name: Build Android APK (ИСИП-25-4)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Сборка APK (ИСИП-25-4 Расписание)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 1. Выгрузка исходного кода
+        uses: actions/checkout@v4
+
+      - name: 2. Установка Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: 3. Установка Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.3'
+          channel: 'stable'
+          cache: true
+
+      - name: 4. Подготовка структуры проекта и Android-окружения
+        run: |
+          # Если пользователь загрузил main.dart в корень репозитория вместо папки lib/,
+          # автоматически копируем его в lib/main.dart
+          mkdir -p lib
+          if [ -f "main.dart" ] && [ ! -f "lib/main.dart" ]; then
+            cp main.dart lib/main.dart
+          fi
+
+          # Сохраняем пользовательский AndroidManifest.xml и исходники перед генерацией обёртки
+          cp lib/main.dart /tmp/main.dart.bak
+          cp pubspec.yaml /tmp/pubspec.yaml.bak
+          if [ -f "android/app/src/main/AndroidManifest.xml" ]; then
+            cp android/app/src/main/AndroidManifest.xml /tmp/CustomManifest.xml
+          fi
+
+          # Генерируем недостающие платформенные обёртки Android (Gradle wrapper, иконки и т.д.)
+          flutter create --platforms=android --project-name isip_25_4_schedule --org ru.college.isip254 .
+
+          # Восстанавливаем исходный код, pubspec.yaml и AndroidManifest.xml
+          cp /tmp/main.dart.bak lib/main.dart
+          cp /tmp/pubspec.yaml.bak pubspec.yaml
+          if [ -f "/tmp/CustomManifest.xml" ]; then
+            cp /tmp/CustomManifest.xml android/app/src/main/AndroidManifest.xml
+          else
+            sed -i 's/<application/<uses-permission android:name="android.permission.INTERNET"\/>\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"\/>\n    <application android:usesCleartextTraffic="true"/' android/app/src/main/AndroidManifest.xml
+          fi
+
+      - name: 5. Установка зависимостей Flutter
+        run: flutter pub get
+
+      - name: 6. Сборка установочного файла APK (Release)
+        run: flutter build apk --release --no-tree-shake-icons
+
+      - name: 7. Переименование готового APK
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk ISIP-25-4-Schedule.apk
+
+      - name: 8. Публикация APK в артефактах сборки (Actions Artifacts)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ISIP-25-4-Schedule-APK
+          path: ISIP-25-4-Schedule.apk
+          if-no-files-found: error
+
+      - name: 9. Автоматический выпуск релиза с прямой ссылкой на APK
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: "Расписание ИСИП-25-4 (Build #${{ github.run_number }})"
+          body: "Готовый установочный файл `.apk` для Android (группа ИСИП-25-4)."
+          files: ISIP-25-4-Schedule.apk
